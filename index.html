@@ -1,0 +1,1756 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Doc2PDF — 极简电子书与文档转 PDF 工具</title>
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Marked.js (Markdown 解析) -->
+  <script src="https://cdn.jsdelivr.net/npm/marked@12.0.0/marked.min.js"></script>
+  <!-- JSZip (EPUB 解压) -->
+  <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+  <!-- html2pdf.js (直接生成 PDF 下载) -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+  <!-- Google Fonts: Inter & Noto Serif SC -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Noto+Serif+SC:wght@400;600&display=swap" rel="stylesheet">
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            brand: {
+              50: '#eff6ff',
+              100: '#dbeafe',
+              500: '#3b82f6',
+              600: '#2563eb',
+              700: '#1d4ed8'
+            }
+          }
+        }
+      }
+    };
+  </script>
+  <style>
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+      transition: background-color 0.2s ease, color 0.2s ease;
+    }
+
+    /* 预览区域的排版隔离基础样式 */
+    .preview-typography {
+      font-family: "Noto Serif SC", "Songti SC", "SimSun", Georgia, serif;
+      word-break: break-word;
+      overflow-wrap: break-word;
+    }
+
+    .preview-typography h1,
+    .preview-typography h2,
+    .preview-typography h3,
+    .preview-typography h4,
+    .preview-typography h5,
+    .preview-typography h6 {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+      font-weight: 600;
+      margin-top: 1.5em;
+      margin-bottom: 0.6em;
+      line-height: 1.35;
+    }
+
+    .preview-typography h1 { font-size: 1.65em; border-bottom: 1px solid rgba(148, 163, 184, 0.35); padding-bottom: 0.3em; }
+    .preview-typography h2 { font-size: 1.35em; }
+    .preview-typography h3 { font-size: 1.15em; }
+    .preview-typography p { margin-bottom: 0.9em; text-align: justify; }
+    .preview-typography img { max-width: 100%; height: auto; display: block; margin: 1.2em auto; border-radius: 6px; }
+    .preview-typography pre { background: rgba(148, 163, 184, 0.14); padding: 0.9em; border-radius: 6px; overflow-x: auto; font-size: 0.88em; margin-bottom: 1em; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
+    .preview-typography code { background: rgba(148, 163, 184, 0.14); padding: 0.15em 0.35em; border-radius: 4px; font-size: 0.9em; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    .preview-typography pre code { background: transparent; padding: 0; }
+    .preview-typography blockquote { border-left: 3px solid #3b82f6; padding-left: 1em; opacity: 0.85; margin: 1em 0; }
+    .preview-typography ul, .preview-typography ol { padding-left: 1.5em; margin-bottom: 1em; }
+    .preview-typography li { margin-bottom: 0.35em; }
+    .preview-typography table { width: 100%; border-collapse: collapse; margin: 1em 0; font-size: 0.92em; }
+    .preview-typography th, .preview-typography td { border: 1px solid rgba(148, 163, 184, 0.35); padding: 0.5em 0.75em; text-align: left; }
+    .preview-typography th { background: rgba(148, 163, 184, 0.14); font-weight: 600; }
+    .epub-cover-wrap { text-align: center; margin-bottom: 2em; padding-bottom: 1.5em; border-bottom: 1px dashed rgba(148, 163, 184, 0.4); }
+    .epub-cover-wrap img { max-height: 460px; width: auto; margin: 0 auto 1em auto; box-shadow: 0 8px 24px rgba(15, 23, 42, 0.12); }
+    .chapter-break { border-top: 1px dashed rgba(148, 163, 184, 0.4); margin: 2.5em 0; padding-top: 1.5em; }
+
+    /* 自定义极简滚动条 */
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 9999px; }
+    .dark ::-webkit-scrollbar-thumb { background: #475569; }
+    ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+
+    /* 原生打印兜底（主流程使用隔离 iframe 打印，此处防止误触页面打印） */
+    @media print {
+      .no-print { display: none !important; }
+    }
+  </style>
+</head>
+<body class="min-h-screen flex flex-col items-center py-8 px-4 sm:px-6 bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100">
+
+  <!-- 顶部标题栏 -->
+  <header class="no-print w-full max-w-3xl mb-6 flex items-center justify-between">
+    <div class="flex items-center gap-3">
+      <div class="w-9 h-9 rounded-xl bg-blue-600 text-white flex items-center justify-center shadow-sm shadow-blue-600/20">
+        <svg class="w-4.5 h-4.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
+        </svg>
+      </div>
+      <div>
+        <h1 class="text-base font-semibold tracking-tight text-slate-900 dark:text-white">Doc2PDF</h1>
+        <p class="text-xs text-slate-500 dark:text-slate-400">本地纯前端电子书与文档转 PDF</p>
+      </div>
+    </div>
+
+    <div class="flex items-center gap-2.5">
+      <span class="hidden sm:inline-flex items-center gap-1.5 text-xs text-slate-600 dark:text-slate-300 bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-800 px-3 py-1 rounded-full shadow-2xs">
+        <span class="w-1.5 h-1.5 rounded-full bg-blue-500"></span>
+        100% 本地浏览器解析
+      </span>
+
+      <!-- 深色模式切换按钮 -->
+      <button id="themeToggleBtn" type="button" title="切换浅色 / 深色模式"
+              class="p-2 rounded-xl bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-800 text-slate-600 dark:text-slate-300 hover:border-blue-400 dark:hover:border-blue-500 transition-colors shadow-2xs">
+        <!-- 太阳图标（深色下显示） -->
+        <svg id="sunIcon" class="w-4 h-4 hidden dark:block text-amber-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M12 3v2.25m6.364.386l-1.591 1.591M21 12h-2.25m-.386 6.364l-1.591-1.591M12 18.75V21m-4.773-4.227l-1.591 1.591M5.25 12H3m4.227-4.773L5.636 5.636M15.75 12a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0z" />
+        </svg>
+        <!-- 月亮图标（浅色下显示） -->
+        <svg id="moonIcon" class="w-4 h-4 block dark:hidden text-slate-600" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M21.752 15.002A9.718 9.718 0 0118 15.75c-5.385 0-9.75-4.365-9.75-9.75 0-1.33.266-2.597.748-3.752A9.753 9.753 0 003 11.25C3 16.635 7.365 21 12.75 21a9.753 9.753 0 009.002-5.998z" />
+        </svg>
+      </button>
+    </div>
+  </header>
+
+  <!-- 主卡片容器 -->
+  <main class="w-full max-w-3xl bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-800 rounded-2xl shadow-sm overflow-hidden transition-all">
+
+    <!-- 1. 上传区域 -->
+    <div class="no-print p-6 sm:p-8">
+      <div id="dropZone"
+           class="group relative border-2 border-dashed border-slate-200 dark:border-slate-700 hover:border-blue-500 dark:hover:border-blue-500 rounded-xl p-8 sm:p-10 text-center cursor-pointer transition-all bg-blue-50/25 dark:bg-slate-800/40 hover:bg-blue-50/60 dark:hover:bg-slate-800/70">
+        <input type="file" id="fileInput" accept=".mobi,.epub,.txt,.md,.markdown" class="hidden">
+
+        <div class="mx-auto w-12 h-12 rounded-xl bg-white dark:bg-slate-800 border border-blue-100 dark:border-slate-700 shadow-2xs flex items-center justify-center text-blue-600 dark:text-blue-400 group-hover:scale-105 transition-transform mb-3.5">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5" />
+          </svg>
+        </div>
+
+        <p class="text-sm font-medium text-slate-900 dark:text-slate-100">
+          点击选择文件，或将电子书 / 文档拖拽至此处
+        </p>
+        <p class="text-xs text-slate-500 dark:text-slate-400 mt-1.5">
+          支持 <span class="font-medium text-blue-600 dark:text-blue-400">EPUB</span>、<span class="font-medium text-blue-600 dark:text-blue-400">MOBI</span>、<span class="font-medium text-blue-600 dark:text-blue-400">TXT</span>、<span class="font-medium text-blue-600 dark:text-blue-400">MD</span> 格式，所有内容均在本地内存中完成解析
+        </p>
+      </div>
+
+      <!-- 状态与消息提示条（替代 alert） -->
+      <div id="statusBanner" class="hidden mt-4 px-3.5 py-2.5 rounded-xl text-xs flex items-center justify-between gap-2 border">
+        <div class="flex items-center gap-2 min-w-0">
+          <span id="statusIcon" class="shrink-0"></span>
+          <span id="statusText" class="break-words"></span>
+        </div>
+        <button id="closeBannerBtn" class="text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 shrink-0 p-0.5" title="关闭提示">
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+          </svg>
+        </button>
+      </div>
+
+      <!-- 已加载文件信息卡片 -->
+      <div id="fileInfoCard" class="hidden mt-5 pt-5 border-t border-slate-100 dark:border-slate-800">
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div class="flex items-center gap-3 min-w-0">
+            <span id="fileBadge" class="shrink-0 px-2.5 py-1 rounded-lg text-xs font-semibold uppercase tracking-wider bg-blue-600 text-white shadow-2xs">
+              EPUB
+            </span>
+            <div class="min-w-0">
+              <h2 id="fileName" class="text-sm font-medium text-slate-900 dark:text-white truncate" title="">example.epub</h2>
+              <p id="fileMeta" class="text-xs text-slate-500 dark:text-slate-400 mt-0.5">1.24 MB · 已解析 12 个章节</p>
+            </div>
+          </div>
+
+          <!-- 重新选择文件快捷按钮 -->
+          <button id="reselectBtn" class="self-start sm:self-center text-xs font-medium text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300 underline underline-offset-4 shrink-0">
+            更换文件
+          </button>
+        </div>
+
+        <!-- 2. 紧凑排版微调选项栏 -->
+        <div class="mt-5 p-3.5 bg-slate-50/90 dark:bg-slate-800/60 border border-slate-200/70 dark:border-slate-700/70 rounded-xl">
+          <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <!-- 页面尺寸 -->
+            <div>
+              <label for="optPageSize" class="block text-[11px] font-medium text-slate-500 dark:text-slate-400 mb-1">页面尺寸</label>
+              <select id="optPageSize" class="w-full text-xs bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg px-2.5 py-1.5 text-slate-800 dark:text-slate-200 focus:outline-none focus:border-blue-500">
+                <option value="A4" selected>A4 (标准文档)</option>
+                <option value="A5">A5 (电子书阅读)</option>
+              </select>
+            </div>
+
+            <!-- 字体大小 -->
+            <div>
+              <label for="optFontSize" class="block text-[11px] font-medium text-slate-500 dark:text-slate-400 mb-1">正文字号</label>
+              <select id="optFontSize" class="w-full text-xs bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg px-2.5 py-1.5 text-slate-800 dark:text-slate-200 focus:outline-none focus:border-blue-500">
+                <option value="13px">较小 (13px)</option>
+                <option value="15px" selected>适中 (15px)</option>
+                <option value="17px">偏大 (17px)</option>
+                <option value="19px">特大 (19px)</option>
+              </select>
+            </div>
+
+            <!-- 行高 -->
+            <div>
+              <label for="optLineHeight" class="block text-[11px] font-medium text-slate-500 dark:text-slate-400 mb-1">行间距</label>
+              <select id="optLineHeight" class="w-full text-xs bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg px-2.5 py-1.5 text-slate-800 dark:text-slate-200 focus:outline-none focus:border-blue-500">
+                <option value="1.5">紧凑 (1.5)</option>
+                <option value="1.75" selected>舒适 (1.75)</option>
+                <option value="2.0">宽松 (2.0)</option>
+              </select>
+            </div>
+
+            <!-- 页边距 -->
+            <div>
+              <label for="optMargin" class="block text-[11px] font-medium text-slate-500 dark:text-slate-400 mb-1">页边距</label>
+              <select id="optMargin" class="w-full text-xs bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg px-2.5 py-1.5 text-slate-800 dark:text-slate-200 focus:outline-none focus:border-blue-500">
+                <option value="12mm">窄边距 (12mm)</option>
+                <option value="18mm" selected>标准 (18mm)</option>
+                <option value="25mm">宽边距 (25mm)</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <!-- 3. 操作按钮组 -->
+        <div class="mt-5 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+          <!-- 预览折叠开关 -->
+          <button id="togglePreviewBtn" type="button"
+                  class="inline-flex items-center justify-center gap-1.5 px-3.5 py-2 text-xs font-medium text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700/70 rounded-xl transition-colors">
+            <svg id="previewEyeIcon" class="w-3.5 h-3.5 text-blue-500" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z" />
+              <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+            </svg>
+            <span id="togglePreviewText">展开内容预览</span>
+          </button>
+
+          <!-- 两种 PDF 导出方式 -->
+          <div class="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5">
+            <!-- 直接下载 PDF (html2pdf.js) -->
+            <button id="directDownloadBtn" type="button"
+                    class="inline-flex items-center justify-center gap-1.5 px-4 py-2 text-xs font-medium text-blue-700 dark:text-blue-300 bg-blue-50 dark:bg-blue-950/60 hover:bg-blue-100/80 dark:hover:bg-blue-900/60 border border-blue-200/80 dark:border-blue-800/80 rounded-xl transition-colors">
+              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+              </svg>
+              <span id="directDownloadText">一键直接下载 PDF</span>
+            </button>
+
+            <!-- 推荐：原生高清矢量打印导出 -->
+            <button id="vectorPrintBtn" type="button"
+                    class="inline-flex items-center justify-center gap-1.5 px-4 py-2 text-xs font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-xl shadow-xs shadow-blue-600/20 transition-colors">
+              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" />
+              </svg>
+              <span>导出高清矢量 PDF (推荐)</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 4. 可折叠的渲染预览区域 -->
+    <div id="previewWrapper" class="hidden border-t border-slate-200/90 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-900/50">
+      <div class="no-print px-6 py-2.5 bg-blue-50/50 dark:bg-slate-800/80 border-b border-slate-200/70 dark:border-slate-800 flex items-center justify-between text-[11px] text-slate-500 dark:text-slate-400">
+        <span>排版实时预览（导出 PDF 时将自动应用纯白底色与标准页边距）</span>
+        <span id="wordCountBadge">0 字</span>
+      </div>
+      <div class="p-6 sm:p-10 max-h-[62vh] overflow-y-auto bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200">
+        <article id="previewContainer" class="preview-typography mx-auto max-w-2xl" style="font-size: 15px; line-height: 1.75;"></article>
+      </div>
+    </div>
+
+  </main>
+
+  <!-- 页脚极简提示 -->
+  <footer class="no-print w-full max-w-3xl mt-6 text-center text-[11px] text-slate-400 dark:text-slate-500">
+    提示：「导出高清矢量 PDF」调用系统原生打印引擎（目标打印机选“另存为 PDF”），文字可选中且支持超长电子书；「一键直接下载 PDF」自动分页生成 .pdf 文件。
+  </footer>
+
+  <!-- 隐藏的隔离打印 iframe -->
+  <iframe id="printFrame" class="hidden" title="PDF Print Frame"></iframe>
+
+  <script>
+    /**
+     * ============================================================================
+     * Doc2PDF 核心业务逻辑
+     * 包含：深色模式切换、UI 交互、TXT (UTF-16/UTF-8/GBK) 解析、MD 解析、
+     *      高兼容 EPUB 解析器、完整 MOBI/KF8 二进制解析器、双模式 PDF 导出
+     * ============================================================================
+     */
+
+    // 全局应用状态
+    const state = {
+      fileName: '',
+      baseName: '',
+      ext: '',
+      htmlContent: '',
+      isPreviewOpen: false,
+      isExporting: false
+    };
+
+    // DOM 引用
+    const els = {
+      themeToggleBtn: document.getElementById('themeToggleBtn'),
+      dropZone: document.getElementById('dropZone'),
+      fileInput: document.getElementById('fileInput'),
+      statusBanner: document.getElementById('statusBanner'),
+      statusIcon: document.getElementById('statusIcon'),
+      statusText: document.getElementById('statusText'),
+      closeBannerBtn: document.getElementById('closeBannerBtn'),
+      fileInfoCard: document.getElementById('fileInfoCard'),
+      fileBadge: document.getElementById('fileBadge'),
+      fileName: document.getElementById('fileName'),
+      fileMeta: document.getElementById('fileMeta'),
+      reselectBtn: document.getElementById('reselectBtn'),
+      optPageSize: document.getElementById('optPageSize'),
+      optFontSize: document.getElementById('optFontSize'),
+      optLineHeight: document.getElementById('optLineHeight'),
+      optMargin: document.getElementById('optMargin'),
+      togglePreviewBtn: document.getElementById('togglePreviewBtn'),
+      togglePreviewText: document.getElementById('togglePreviewText'),
+      previewWrapper: document.getElementById('previewWrapper'),
+      previewContainer: document.getElementById('previewContainer'),
+      wordCountBadge: document.getElementById('wordCountBadge'),
+      directDownloadBtn: document.getElementById('directDownloadBtn'),
+      directDownloadText: document.getElementById('directDownloadText'),
+      vectorPrintBtn: document.getElementById('vectorPrintBtn'),
+      printFrame: document.getElementById('printFrame')
+    };
+
+    // 初始化事件绑定与主题状态
+    function init() {
+      // 主题初始化（跟随系统或本地记忆）
+      const savedTheme = localStorage.getItem('doc2pdf-theme');
+      const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+      if (savedTheme === 'dark' || (!savedTheme && prefersDark)) {
+        document.documentElement.classList.add('dark');
+      }
+
+      els.themeToggleBtn.addEventListener('click', () => {
+        const isDark = document.documentElement.classList.toggle('dark');
+        localStorage.setItem('doc2pdf-theme', isDark ? 'dark' : 'light');
+      });
+
+      // 点击上传区
+      els.dropZone.addEventListener('click', () => els.fileInput.click());
+      els.reselectBtn.addEventListener('click', () => els.fileInput.click());
+
+      // 文件选择变更
+      els.fileInput.addEventListener('change', (e) => {
+        if (e.target.files && e.target.files.length > 0) {
+          handleFile(e.target.files[0]);
+        }
+      });
+
+      // 拖拽交互
+      ['dragenter', 'dragover'].forEach(evtName => {
+        els.dropZone.addEventListener(evtName, (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          els.dropZone.classList.add('border-blue-500', 'bg-blue-50/70', 'dark:bg-slate-800');
+        });
+      });
+
+      ['dragleave', 'drop'].forEach(evtName => {
+        els.dropZone.addEventListener(evtName, (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          els.dropZone.classList.remove('border-blue-500', 'bg-blue-50/70', 'dark:bg-slate-800');
+        });
+      });
+
+      els.dropZone.addEventListener('drop', (e) => {
+        const files = e.dataTransfer?.files;
+        if (files && files.length > 0) {
+          handleFile(files[0]);
+        }
+      });
+
+      // 关闭提示条
+      els.closeBannerBtn.addEventListener('click', hideStatus);
+
+      // 排版参数实时同步到预览
+      [els.optFontSize, els.optLineHeight].forEach(select => {
+        select.addEventListener('change', applyTypographyToPreview);
+      });
+
+      // 预览折叠切换
+      els.togglePreviewBtn.addEventListener('click', () => {
+        state.isPreviewOpen = !state.isPreviewOpen;
+        updatePreviewVisibility();
+      });
+
+      // 导出按钮绑定
+      els.vectorPrintBtn.addEventListener('click', exportViaVectorPrint);
+      els.directDownloadBtn.addEventListener('click', exportViaDirectDownload);
+    }
+
+    /**
+     * 显示顶部状态提示（替代 alert）
+     * @param {'info'|'success'|'error'} type
+     * @param {string} message
+     */
+    function showStatus(type, message) {
+      els.statusBanner.classList.remove(
+        'hidden',
+        'bg-blue-50/70', 'border-blue-200', 'text-blue-800', 'dark:bg-blue-950/50', 'dark:border-blue-800', 'dark:text-blue-200',
+        'bg-emerald-50/80', 'border-emerald-200', 'text-emerald-800', 'dark:bg-emerald-950/50', 'dark:border-emerald-800', 'dark:text-emerald-200',
+        'bg-red-50/85', 'border-red-200', 'text-red-700', 'dark:bg-red-950/50', 'dark:border-red-800', 'dark:text-red-200'
+      );
+
+      if (type === 'error') {
+        els.statusBanner.classList.add('bg-red-50/85', 'border-red-200', 'text-red-700', 'dark:bg-red-950/50', 'dark:border-red-800', 'dark:text-red-200');
+        els.statusIcon.innerHTML = `<svg class="w-4 h-4 text-red-500" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z"/></svg>`;
+      } else if (type === 'success') {
+        els.statusBanner.classList.add('bg-emerald-50/80', 'border-emerald-200', 'text-emerald-800', 'dark:bg-emerald-950/50', 'dark:border-emerald-800', 'dark:text-emerald-200');
+        els.statusIcon.innerHTML = `<svg class="w-4 h-4 text-emerald-600 dark:text-emerald-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>`;
+      } else {
+        els.statusBanner.classList.add('bg-blue-50/70', 'border-blue-200', 'text-blue-800', 'dark:bg-blue-950/50', 'dark:border-blue-800', 'dark:text-blue-200');
+        els.statusIcon.innerHTML = `<svg class="w-4 h-4 text-blue-600 dark:text-blue-400 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"></path></svg>`;
+      }
+
+      els.statusText.textContent = message;
+    }
+
+    function hideStatus() {
+      els.statusBanner.classList.add('hidden');
+    }
+
+    /**
+     * 格式化文件大小
+     */
+    function formatBytes(bytes) {
+      if (bytes === 0) return '0 B';
+      const k = 1024;
+      const sizes = ['B', 'KB', 'MB', 'GB'];
+      const i = Math.floor(Math.log(bytes) / Math.log(k));
+      return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+    }
+
+    /**
+     * 处理上传的单个文件
+     */
+    async function handleFile(file) {
+      const name = file.name;
+      const dotIdx = name.lastIndexOf('.');
+      const ext = dotIdx !== -1 ? name.slice(dotIdx + 1).toLowerCase() : '';
+      const baseName = dotIdx !== -1 ? name.slice(0, dotIdx) : name;
+
+      const supported = ['mobi', 'epub', 'txt', 'md', 'markdown'];
+      if (!supported.includes(ext)) {
+        showStatus('error', `不支持的文件格式 ".${ext || '未知'}"，请选择 EPUB、MOBI、TXT 或 MD 文件。`);
+        return;
+      }
+
+      state.fileName = name;
+      state.baseName = baseName;
+      state.ext = ext === 'markdown' ? 'md' : ext;
+
+      showStatus('info', `正在解析 "${name}"，请稍候...`);
+
+      try {
+        let result = { html: '', summary: '' };
+
+        if (state.ext === 'txt') {
+          result = await parseTXT(file);
+        } else if (state.ext === 'md') {
+          result = await parseMD(file);
+        } else if (state.ext === 'epub') {
+          result = await parseEPUB(file);
+        } else if (state.ext === 'mobi') {
+          result = await parseMOBI(file);
+        }
+
+        if (!result.html || !result.html.trim()) {
+          throw new Error('未能从文件中提取到有效文本内容，文件可能为空或已损坏。');
+        }
+
+        state.htmlContent = result.html;
+
+        // 更新文件信息卡片
+        els.fileBadge.textContent = state.ext.toUpperCase();
+        els.fileName.textContent = name;
+        els.fileName.title = name;
+        els.fileMeta.textContent = `${formatBytes(file.size)} · ${result.summary}`;
+        els.fileInfoCard.classList.remove('hidden');
+
+        // 渲染预览区
+        els.previewContainer.innerHTML = state.htmlContent;
+        applyTypographyToPreview();
+
+        // 统计纯文本字数
+        const plainLen = (els.previewContainer.textContent || '').replace(/\s+/g, '').length;
+        els.wordCountBadge.textContent = `约 ${plainLen.toLocaleString()} 字`;
+
+        // 默认展开预览方便确认
+        if (!state.isPreviewOpen) {
+          state.isPreviewOpen = true;
+          updatePreviewVisibility();
+        }
+
+        showStatus('success', `解析完成！您可以调整排版参数或直接导出 PDF。`);
+      } catch (err) {
+        console.error('文件解析错误:', err);
+        showStatus('error', `解析失败：${err.message || '未知错误'}`);
+      } finally {
+        // 允许重复选择同一文件
+        els.fileInput.value = '';
+      }
+    }
+
+    function applyTypographyToPreview() {
+      els.previewContainer.style.fontSize = els.optFontSize.value;
+      els.previewContainer.style.lineHeight = els.optLineHeight.value;
+    }
+
+    function updatePreviewVisibility() {
+      if (state.isPreviewOpen) {
+        els.previewWrapper.classList.remove('hidden');
+        els.togglePreviewText.textContent = '收起内容预览';
+      } else {
+        els.previewWrapper.classList.add('hidden');
+        els.togglePreviewText.textContent = '展开内容预览';
+      }
+    }
+
+    /**
+     * ============================================================================
+     * 1. TXT 解析器（支持 UTF-16LE/BE、UTF-8 / GB18030 自动侦测与段落排版）
+     * ============================================================================
+     */
+    async function parseTXT(file) {
+      const buffer = await file.arrayBuffer();
+      const text = decodeSmartText(new Uint8Array(buffer));
+      const lines = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
+
+      const paragraphs = [];
+      for (const rawLine of lines) {
+        const trimmed = rawLine.trim();
+        if (trimmed.length > 0) {
+          paragraphs.push(`<p>${escapeHtml(trimmed)}</p>`);
+        }
+      }
+
+      return {
+        html: `<h1>${escapeHtml(state.baseName)}</h1>\n` + paragraphs.join('\n'),
+        summary: `共 ${paragraphs.length} 个自然段`
+      };
+    }
+
+    /**
+     * ============================================================================
+     * 2. Markdown 解析器（使用 marked.js）
+     * ============================================================================
+     */
+    async function parseMD(file) {
+      const buffer = await file.arrayBuffer();
+      const text = decodeSmartText(new Uint8Array(buffer));
+
+      marked.setOptions({
+        gfm: true,
+        breaks: true
+      });
+
+      const rawHtml = marked.parse(text);
+      const cleanHtml = sanitizeHtmlFragment(rawHtml);
+
+      return {
+        html: cleanHtml,
+        summary: 'Markdown 渲染就绪'
+      };
+    }
+
+    /**
+     * 智能文本编码解码：支持 UTF-16 BOM、严格 UTF-8、GB18030/GBK 自动回退
+     */
+    function decodeSmartText(uint8Array) {
+      if (uint8Array.length >= 2) {
+        if (uint8Array[0] === 0xFF && uint8Array[1] === 0xFE) {
+          return new TextDecoder('utf-16le').decode(uint8Array.subarray(2));
+        }
+        if (uint8Array[0] === 0xFE && uint8Array[1] === 0xFF) {
+          return new TextDecoder('utf-16be').decode(uint8Array.subarray(2));
+        }
+      }
+      if (uint8Array.length >= 3 && uint8Array[0] === 0xEF && uint8Array[1] === 0xBB && uint8Array[2] === 0xBF) {
+        return new TextDecoder('utf-8').decode(uint8Array.subarray(3));
+      }
+
+      try {
+        const utf8Decoder = new TextDecoder('utf-8', { fatal: true });
+        return utf8Decoder.decode(uint8Array);
+      } catch (e) {
+        try {
+          const gbkDecoder = new TextDecoder('gb18030');
+          return gbkDecoder.decode(uint8Array);
+        } catch (e2) {
+          return new TextDecoder('utf-8', { fatal: false }).decode(uint8Array);
+        }
+      }
+    }
+
+    /**
+     * ============================================================================
+     * 3. 高兼容性 EPUB 解析器（JSZip + 路径索引归一化 + 命名空间双重匹配 + 封面与资源内嵌）
+     * ============================================================================
+     */
+    async function parseEPUB(file) {
+      if (typeof JSZip === 'undefined') {
+        throw new Error('JSZip 组件未加载成功，请检查网络连接后刷新页面重试。');
+      }
+
+      let zip;
+      try {
+        zip = await JSZip.loadAsync(file);
+      } catch (zipErr) {
+        throw new Error('无法解压该 EPUB 文件，文件可能已损坏或并非有效的 ZIP/EPUB 容器。');
+      }
+
+      // 构建标准化 ZIP 文件索引（同时兼容反斜杠 \、前导 ./ 或 /、大小写差异与 URL 编码）
+      const zipIndex = buildNormalizedZipIndex(zip);
+      if (zipIndex.entries.length === 0) {
+        throw new Error('EPUB 压缩包内容为空。');
+      }
+
+      // 检测是否存在 DRM 加密（META-INF/encryption.xml 且非仅字体混淆）
+      const encEntry = findZipEntry(zipIndex, 'META-INF/encryption.xml');
+      if (encEntry) {
+        const encXml = await encEntry.obj.async('string');
+        const hasFontObfuscationOnly =
+          (encXml.includes('http://www.idpf.org/2008/embedding') ||
+           encXml.includes('http://ns.adobe.com/pdf/enc#RC')) &&
+          !encXml.includes('EncryptedKey') &&
+          !encXml.includes('http://www.w3.org/2001/04/xmlenc#aes');
+
+        if (!hasFontObfuscationOnly && encXml.includes('EncryptedData')) {
+          throw new Error('该 EPUB 文件受 DRM 加密保护（存在 encryption.xml），浏览器无法直接解密。请先使用 Calibre 移除 DRM 后再转换。');
+        }
+      }
+
+      const parser = new DOMParser();
+
+      // 1) 定位 OPF 主清单文件路径（优先解析 META-INF/container.xml，失效时自动扫描 .opf 文件兜底）
+      let opfEntry = null;
+      const containerEntry = findZipEntry(zipIndex, 'META-INF/container.xml');
+
+      if (containerEntry) {
+        try {
+          const containerRaw = await containerEntry.obj.async('string');
+          // 优先 XML 解析，若命名空间或声明异常则回退 text/html
+          let containerDoc = parser.parseFromString(containerRaw, 'application/xml');
+          if (containerDoc.querySelector('parsererror')) {
+            containerDoc = parser.parseFromString(containerRaw, 'text/html');
+          }
+
+          const rootfiles = getElementsByLocalName(containerDoc, 'rootfile');
+          for (const rf of rootfiles) {
+            const fullPath = rf.getAttribute('full-path');
+            if (fullPath) {
+              opfEntry = findZipEntry(zipIndex, safeDecodeUri(fullPath));
+              if (opfEntry) break;
+            }
+          }
+        } catch (e) {
+          console.warn('解析 container.xml 时出现非致命异常，准备启用 OPF 扫描兜底:', e);
+        }
+      }
+
+      // 兜底策略：若 container.xml 缺失或 full-path 指向错误，直接在 ZIP 内查找 .opf 文件
+      if (!opfEntry) {
+        opfEntry = zipIndex.entries.find(item => item.normPath.toLowerCase().endsWith('.opf')) || null;
+      }
+
+      if (!opfEntry) {
+        throw new Error('无效的 EPUB 结构：既未在 container.xml 中找到 OPF 路径，也未扫描到任何 .opf 清单文件。');
+      }
+
+      const opfPath = opfEntry.normPath;
+      const opfDir = opfPath.includes('/') ? opfPath.slice(0, opfPath.lastIndexOf('/') + 1) : '';
+      const opfRaw = await opfEntry.obj.async('string');
+
+      let opfDoc = parser.parseFromString(opfRaw, 'application/xml');
+      if (opfDoc.querySelector('parsererror')) {
+        opfDoc = parser.parseFromString(opfRaw, 'text/html');
+      }
+
+      // 2) 解析 <manifest> 清单（兼容 opf:manifest 命名空间、反斜杠与 URL 编码）
+      const manifestMap = new Map();
+      const manifestItems = getElementsByLocalName(opfDoc, 'item');
+      let coverItemId = null;
+
+      // 查找 <meta name="cover" content="..."/> 以识别封面
+      getElementsByLocalName(opfDoc, 'meta').forEach(meta => {
+        const metaName = (meta.getAttribute('name') || '').toLowerCase();
+        if (metaName === 'cover') {
+          coverItemId = meta.getAttribute('content');
+        }
+      });
+
+      manifestItems.forEach(item => {
+        const id = item.getAttribute('id');
+        const href = item.getAttribute('href');
+        const mediaType = (item.getAttribute('media-type') || '').toLowerCase();
+        const properties = (item.getAttribute('properties') || '').toLowerCase();
+
+        if (properties.includes('cover-image') && id) {
+          coverItemId = id;
+        }
+
+        if (id && href) {
+          const decodedHref = safeDecodeUri(href.split('#')[0]);
+          const resolvedPath = resolveZipPath(opfDir, decodedHref);
+          manifestMap.set(id, {
+            id,
+            href: decodedHref,
+            resolvedPath,
+            mediaType,
+            properties
+          });
+        }
+      });
+
+      // 3) 按 <spine> 阅读顺序收集章节；若 spine 为空或无匹配则自动回退到 manifest 中的 HTML/XHTML 文件
+      const orderedChapters = [];
+      const visitedPaths = new Set();
+
+      const spineRefs = getElementsByLocalName(opfDoc, 'itemref');
+      spineRefs.forEach(ref => {
+        const idref = ref.getAttribute('idref');
+        if (!idref || !manifestMap.has(idref)) return;
+        const mItem = manifestMap.get(idref);
+        // 跳过导航目录文档 (nav) 若非正文
+        if (mItem.properties.includes('nav') && spineRefs.length > 1) return;
+        if (!visitedPaths.has(mItem.resolvedPath)) {
+          visitedPaths.add(mItem.resolvedPath);
+          orderedChapters.push(mItem);
+        }
+      });
+
+      // Spine 兜底回退：按 manifest 中 XHTML/HTML 类型顺序收集
+      if (orderedChapters.length === 0) {
+        for (const mItem of manifestMap.values()) {
+          const isHtmlMime = mItem.mediaType.includes('html') || mItem.mediaType.includes('xml');
+          const isHtmlExt = /\.(xhtml|html|htm)$/i.test(mItem.resolvedPath);
+          if ((isHtmlMime || isHtmlExt) && !mItem.resolvedPath.toLowerCase().endsWith('.ncx')) {
+            if (!visitedPaths.has(mItem.resolvedPath)) {
+              visitedPaths.add(mItem.resolvedPath);
+              orderedChapters.push(mItem);
+            }
+          }
+        }
+      }
+
+      // 终极兜底：直接扫描 ZIP 内所有 .xhtml / .html / .htm 文件（按自然文件名排序）
+      if (orderedChapters.length === 0) {
+        const htmlEntries = zipIndex.entries
+          .filter(e => /\.(xhtml|html|htm)$/i.test(e.normPath))
+          .sort((a, b) => a.normPath.localeCompare(b.normPath, undefined, { numeric: true }));
+
+        htmlEntries.forEach(entry => {
+          orderedChapters.push({
+            id: entry.normPath,
+            href: entry.normPath,
+            resolvedPath: entry.normPath,
+            mediaType: 'application/xhtml+xml'
+          });
+        });
+      }
+
+      if (orderedChapters.length === 0) {
+        throw new Error('未能从 EPUB 中找到任何可读的 XHTML / HTML 章节内容。');
+      }
+
+      // 缓存已转换的 base64 图片避免重复解压
+      const imageCache = new Map();
+      const chaptersHtml = [];
+
+      // 若存在独立封面图且第一章未包含该封面，则前置插入封面页
+      let coverDataUrl = null;
+      if (coverItemId && manifestMap.has(coverItemId)) {
+        const coverItem = manifestMap.get(coverItemId);
+        if (coverItem.mediaType.startsWith('image/') || /\.(jpe?g|png|gif|webp|svg)$/i.test(coverItem.resolvedPath)) {
+          coverDataUrl = await getZipImageAsDataUrl(zipIndex, coverItem.resolvedPath, imageCache);
+        }
+      }
+
+      // 4) 逐章读取并以宽容 text/html 模式解析清洗
+      for (let i = 0; i < orderedChapters.length; i++) {
+        const chapterMeta = orderedChapters[i];
+        const chapterEntry = findZipEntry(zipIndex, chapterMeta.resolvedPath);
+        if (!chapterEntry) continue;
+
+        const chapterBytes = await chapterEntry.obj.async('uint8array');
+        const chapterRaw = decodeSmartText(chapterBytes);
+
+        // 强制使用 text/html 宽容解析，彻底避免未闭合 <br>/<img> 或 &nbsp; 导致的 XML parsererror
+        const chapterDoc = parser.parseFromString(chapterRaw, 'text/html');
+        const body = chapterDoc.body;
+        if (!body) continue;
+
+        // 移除脚本、外链样式与潜在危险/冲突元素
+        body.querySelectorAll('script, style, link, meta, iframe, object, embed, noscript').forEach(el => el.remove());
+
+        // 清理可能破坏 PDF 分页的 inline 绝对/固定定位与隐藏样式
+        body.querySelectorAll('*').forEach(el => {
+          Array.from(el.attributes).forEach(attr => {
+            if (attr.name.toLowerCase().startsWith('on')) {
+              el.removeAttribute(attr.name);
+            }
+          });
+          if (el.style) {
+            if (el.style.position === 'fixed' || el.style.position === 'absolute') {
+              el.style.position = 'static';
+            }
+            if (el.style.height && el.style.height.includes('vh')) {
+              el.style.height = 'auto';
+            }
+          }
+        });
+
+        const actualChapterPath = chapterEntry.normPath;
+        const chapterDir = actualChapterPath.includes('/')
+          ? actualChapterPath.slice(0, actualChapterPath.lastIndexOf('/') + 1)
+          : '';
+
+        // 内嵌普通 <img> 图片（支持相对路径、../ 回退、URL 编码与文件名兜底匹配）
+        const imgEls = Array.from(body.querySelectorAll('img'));
+        for (const img of imgEls) {
+          const src = img.getAttribute('src');
+          if (!src || src.startsWith('data:') || /^https?:\/\//i.test(src)) continue;
+
+          const cleanSrc = safeDecodeUri(src.split('#')[0].split('?')[0]);
+          const imgZipPath = resolveZipPath(chapterDir, cleanSrc);
+          const dataUrl = await getZipImageAsDataUrl(zipIndex, imgZipPath, imageCache);
+          if (dataUrl) {
+            img.setAttribute('src', dataUrl);
+            img.removeAttribute('srcset');
+          } else {
+            img.remove();
+          }
+        }
+
+        // 内嵌 SVG <image xlink:href="..."> 或 <image href="...">
+        const svgImgs = Array.from(body.querySelectorAll('image'));
+        for (const svgImg of svgImgs) {
+          const href = svgImg.getAttribute('xlink:href') || svgImg.getAttribute('href');
+          if (!href || href.startsWith('data:') || /^https?:\/\//i.test(href)) continue;
+
+          const cleanHref = safeDecodeUri(href.split('#')[0].split('?')[0]);
+          const imgZipPath = resolveZipPath(chapterDir, cleanHref);
+          const dataUrl = await getZipImageAsDataUrl(zipIndex, imgZipPath, imageCache);
+          if (dataUrl) {
+            svgImg.setAttribute('href', dataUrl);
+            svgImg.removeAttribute('xlink:href');
+          }
+        }
+
+        // 过滤既无文字也无图片的空白占位章节（如空白扉页）
+        const textOnly = (body.textContent || '').replace(/\s+/g, '');
+        const hasMedia = body.querySelector('img, svg, table') !== null;
+        if (!textOnly && !hasMedia) continue;
+
+        const inner = body.innerHTML.trim();
+        if (inner) {
+          chaptersHtml.push(`<section class="${chaptersHtml.length > 0 ? 'chapter-break' : ''}">${inner}</section>`);
+        }
+      }
+
+      if (chaptersHtml.length === 0) {
+        throw new Error('EPUB 章节内容均为空或受特殊保护，未能提取到可渲染的正文。');
+      }
+
+      // 若提取到了封面图且第一章正文尚未内嵌该封面，则在最前面添加封面展示
+      if (coverDataUrl && !chaptersHtml[0].includes(coverDataUrl.slice(0, 64))) {
+        chaptersHtml.unshift(
+          `<section class="epub-cover-wrap"><img src="${coverDataUrl}" alt="${escapeHtml(state.baseName)} 封面" /></section>`
+        );
+      }
+
+      return {
+        html: chaptersHtml.join('\n'),
+        summary: `已按阅读顺序解析 ${chaptersHtml.length} 个章节`
+      };
+    }
+
+    /**
+     * 构建规范化的 ZIP 路径查找索引（统一转换反斜杠 \ 为 /，支持精确匹配、大小写不敏感匹配与文件名兜底）
+     */
+    function buildNormalizedZipIndex(zip) {
+      const entries = [];
+      const exactMap = new Map();
+      const lowerMap = new Map();
+
+      Object.keys(zip.files).forEach(rawKey => {
+        const fileObj = zip.files[rawKey];
+        if (fileObj.dir) return;
+        const normPath = normalizeZipKey(rawKey);
+        const entry = { rawKey, normPath, obj: fileObj };
+        entries.push(entry);
+        exactMap.set(normPath, entry);
+        lowerMap.set(normPath.toLowerCase(), entry);
+      });
+
+      return { entries, exactMap, lowerMap };
+    }
+
+    /**
+     * 规范化单个 ZIP 内部路径键（反斜杠转正斜杠、去除前导 ./ 与 /、合并多余斜杠）
+     */
+    function normalizeZipKey(path) {
+      return String(path || '')
+        .replace(/\\/g, '/')
+        .replace(/^(\.\/)+/, '')
+        .replace(/^\/+/, '')
+        .replace(/\/{2,}/g, '/');
+    }
+
+    /**
+     * 在规范化索引中查找 ZIP 条目（支持精确、忽略大小写、URL 解码回退）
+     */
+    function findZipEntry(zipIndex, targetPath) {
+      const norm = normalizeZipKey(targetPath);
+      if (zipIndex.exactMap.has(norm)) return zipIndex.exactMap.get(norm);
+
+      const lower = norm.toLowerCase();
+      if (zipIndex.lowerMap.has(lower)) return zipIndex.lowerMap.get(lower);
+
+      const decodedLower = normalizeZipKey(safeDecodeUri(targetPath)).toLowerCase();
+      if (zipIndex.lowerMap.has(decodedLower)) return zipIndex.lowerMap.get(decodedLower);
+
+      return null;
+    }
+
+    /**
+     * 安全执行 decodeURIComponent（防止文件名包含孤立 % 符号时抛 URIError）
+     */
+    function safeDecodeUri(str) {
+      try {
+        return decodeURIComponent(str);
+      } catch {
+        return str;
+      }
+    }
+
+    /**
+     * 兼容 XML 命名空间与大小写的元素查询辅助函数
+     */
+    function getElementsByLocalName(doc, localName) {
+      const target = localName.toLowerCase();
+      // 优先使用通配命名空间查询
+      if (typeof doc.getElementsByTagNameNS === 'function') {
+        const nsList = Array.from(doc.getElementsByTagNameNS('*', localName));
+        if (nsList.length > 0) return nsList;
+      }
+      // 回退遍历全部节点比对 localName / nodeName 后缀
+      return Array.from(doc.getElementsByTagName('*')).filter(el => {
+        const ln = (el.localName || el.nodeName || '').toLowerCase();
+        return ln === target || ln.endsWith(':' + target);
+      });
+    }
+
+    /**
+     * 规范化 ZIP 内部相对路径（兼容 Windows 反斜杠、../ 回退与 ./ 当前目录）
+     */
+    function resolveZipPath(baseDir, relativePath) {
+      const cleanRel = String(relativePath || '').replace(/\\/g, '/');
+      if (cleanRel.startsWith('/')) {
+        return normalizeZipKey(cleanRel);
+      }
+      const cleanBase = String(baseDir || '').replace(/\\/g, '/');
+      const stack = cleanBase ? cleanBase.split('/').filter(Boolean) : [];
+      const parts = cleanRel.split('/');
+      for (const part of parts) {
+        if (part === '.' || part === '') continue;
+        if (part === '..') {
+          stack.pop();
+        } else {
+          stack.push(part);
+        }
+      }
+      return stack.join('/');
+    }
+
+    /**
+     * 读取 ZIP 中图片并转换为 base64 Data URL（支持路径大小写无关与同文件名兜底匹配）
+     */
+    async function getZipImageAsDataUrl(zipIndex, path, cache) {
+      const normKey = normalizeZipKey(path).toLowerCase();
+      if (cache.has(normKey)) return cache.get(normKey);
+
+      let entry = findZipEntry(zipIndex, path);
+
+      // 若相对路径存在偏差，按同名图片文件做唯一/首项兜底匹配
+      if (!entry) {
+        const fileName = normKey.split('/').pop();
+        if (fileName && /\.(jpe?g|png|gif|webp|svg)$/i.test(fileName)) {
+          entry = zipIndex.entries.find(e => e.normPath.toLowerCase().endsWith('/' + fileName) || e.normPath.toLowerCase() === fileName) || null;
+        }
+      }
+
+      if (!entry) {
+        cache.set(normKey, null);
+        return null;
+      }
+
+      try {
+        const base64 = await entry.obj.async('base64');
+        const ext = entry.normPath.split('.').pop().toLowerCase();
+        const mimeMap = {
+          jpg: 'image/jpeg',
+          jpeg: 'image/jpeg',
+          png: 'image/png',
+          gif: 'image/gif',
+          webp: 'image/webp',
+          svg: 'image/svg+xml'
+        };
+        const mime = mimeMap[ext] || 'image/jpeg';
+        const dataUrl = `data:${mime};base64,${base64}`;
+        cache.set(normKey, dataUrl);
+        return dataUrl;
+      } catch {
+        cache.set(normKey, null);
+        return null;
+      }
+    }
+
+    /**
+     * ============================================================================
+     * 4. 完整版纯 JS MOBI / PalmDOC / Hybrid KF8 二进制解析器
+     *    支持：
+     *    - PalmDB Record 表精确解析与安全边界检查
+     *    - MOBI6 + KF8 (AZW3) 混合格式 BOUNDARY 自动探测与回退
+     *    - extraDataFlags 精确 VWI 变长尾部剥离与多字节字符重叠剥离
+     *    - 无压缩 (1)、PalmDOC LZ77 (2)、HUFF/CDIC 字典压缩 (17480)
+     *    - UTF-8 (65001) / Windows-1252 (1252) 解码与 textLength 精确截断
+     *    - 内嵌图片提取并替换 recindex / kindle:embed 引用
+     * ============================================================================
+     */
+    async function parseMOBI(file) {
+      const buffer = await file.arrayBuffer();
+      const bytes = new Uint8Array(buffer);
+      const view = new DataView(buffer);
+
+      if (bytes.length < 86) {
+        throw new Error('文件过小，不是有效的 MOBI 文件。');
+      }
+
+      // 校验 PalmDB 类型标识 (偏移 60..68 应为 "BOOKMOBI" 或 "TEXtREAd")
+      const ident = String.fromCharCode(...bytes.slice(60, 68));
+      if (ident !== 'BOOKMOBI' && ident !== 'TEXtREAd') {
+        throw new Error(`不支持的电子书文件头标识 (${ident})，仅支持标准无 DRM 的 MOBI / PRC / AZW3 文件。`);
+      }
+
+      // 读取 Record 数量（偏移 76，2 字节大端）
+      const numRecords = view.getUint16(76, false);
+      if (numRecords < 2 || 78 + numRecords * 8 > bytes.length) {
+        throw new Error('MOBI 数据记录表损坏或不完整。');
+      }
+
+      // 解析所有 Record 的起始偏移量（从偏移 78 开始，每条 8 字节）
+      const recordOffsets = [];
+      for (let i = 0; i < numRecords; i++) {
+        const entryPos = 78 + i * 8;
+        const offset = view.getUint32(entryPos, false);
+        if (offset > bytes.length) {
+          throw new Error(`MOBI Record #${i} 偏移越界，文件可能已损坏。`);
+        }
+        recordOffsets.push(offset);
+      }
+      recordOffsets.push(bytes.length); // 哨兵结尾
+
+      // 查找是否存在 Hybrid MOBI6 + KF8 的 "BOUNDARY" 记录
+      let boundaryIndex = -1;
+      for (let i = 1; i < numRecords; i++) {
+        const start = recordOffsets[i];
+        const end = recordOffsets[i + 1];
+        if (end - start === 8) {
+          const tag = String.fromCharCode(...bytes.slice(start, end));
+          if (tag === 'BOUNDARY') {
+            boundaryIndex = i;
+            break;
+          }
+        }
+      }
+
+      // 优先解析主 MOBI6 段（从 Record 0 开始），若存在 BOUNDARY 且 MOBI6 失败/为空则自动尝试 KF8 段
+      let parsedSection = null;
+      let primaryError = null;
+
+      try {
+        const mobi6End = boundaryIndex !== -1 ? boundaryIndex : numRecords;
+        parsedSection = parseMobiSection(buffer, bytes, view, recordOffsets, 0, mobi6End);
+      } catch (err) {
+        primaryError = err;
+      }
+
+      if ((!parsedSection || !parsedSection.html.trim()) && boundaryIndex !== -1 && boundaryIndex + 1 < numRecords) {
+        try {
+          parsedSection = parseMobiSection(buffer, bytes, view, recordOffsets, boundaryIndex + 1, numRecords);
+        } catch (kf8Err) {
+          if (!primaryError) primaryError = kf8Err;
+        }
+      }
+
+      if (!parsedSection || !parsedSection.html.trim()) {
+        throw primaryError || new Error('未能从 MOBI 文件中解析出有效正文内容。');
+      }
+
+      return parsedSection;
+    }
+
+    /**
+     * 解析单个 MOBI / KF8 分段（从 headerRecordIdx 开始到 sectionEndIdx）
+     */
+    function parseMobiSection(buffer, bytes, view, recordOffsets, headerRecordIdx, sectionEndIdx) {
+      const rec0Start = recordOffsets[headerRecordIdx];
+      const rec0End = recordOffsets[headerRecordIdx + 1];
+      if (rec0End - rec0Start < 16) {
+        throw new Error('MOBI PalmDOC 文件头不完整。');
+      }
+
+      const rec0View = new DataView(buffer, rec0Start, rec0End - rec0Start);
+
+      const compression = rec0View.getUint16(0, false);    // 1 = 无压缩, 2 = PalmDOC LZ77, 17480 = HUFF/CDIC
+      const textLength = rec0View.getUint32(4, false);     // 解压后正文总字节数
+      const textRecordCount = rec0View.getUint16(8, false);// 正文 Record 数量
+      const recordSize = rec0View.getUint16(10, false) || 4096;
+      const encryptionType = rec0View.getUint16(12, false);
+
+      if (encryptionType !== 0) {
+        throw new Error('该 MOBI 文件受 DRM 加密保护，浏览器无法直接解密转换。请先使用 Calibre 移除 DRM 或转换为无加密 EPUB。');
+      }
+
+      // 读取 MOBI 扩展头（位于 Record 0 偏移 16 处）
+      let textEncoding = 65001; // 默认 UTF-8
+      let firstImageIndex = 0;
+      let huffRecordIndex = 0;
+      let huffRecordCount = 0;
+      let extraDataFlags = 0;
+      let fdstIndex = 0xFFFFFFFF;
+      let fdstCount = 0;
+
+      if (rec0End - rec0Start >= 132) {
+        const mobiMagic = String.fromCharCode(...bytes.slice(rec0Start + 16, rec0Start + 20));
+        if (mobiMagic === 'MOBI') {
+          const mobiHeaderLen = rec0View.getUint32(20, false);
+          textEncoding = rec0View.getUint32(28, false);
+          firstImageIndex = rec0View.getUint32(108, false);
+
+          // HUFF/CDIC 字典记录索引（偏移 16 + 96 = 112）
+          if (rec0End - rec0Start >= 120) {
+            huffRecordIndex = rec0View.getUint32(112, false);
+            huffRecordCount = rec0View.getUint32(116, false);
+          }
+
+          // KF8 FDST 流分布表索引（偏移 16 + 176 = 192）
+          if (mobiHeaderLen >= 184 && rec0End - rec0Start >= 200) {
+            fdstIndex = rec0View.getUint32(192, false);
+            fdstCount = rec0View.getUint32(196, false);
+          }
+
+          // extraDataFlags（偏移 16 + 226 = 242，当 headerLength >= 228 时有效）
+          if (mobiHeaderLen >= 228 && rec0End - rec0Start >= 246) {
+            extraDataFlags = rec0View.getUint32(242, false);
+          } else if (mobiHeaderLen >= 224 && rec0End - rec0Start >= 244) {
+            extraDataFlags = rec0View.getUint16(242, false);
+          }
+        }
+      }
+
+      // 若为 HUFF/CDIC 压缩 (17480)，初始化字典解码器
+      let huffDecoder = null;
+      if (compression === 17480) {
+        if (!huffRecordIndex || huffRecordCount < 2) {
+          throw new Error('该 MOBI 采用 HUFF/CDIC 压缩但缺少字典记录，建议先使用 Calibre 转为 EPUB。');
+        }
+        huffDecoder = buildHuffCdicDecoder(bytes, recordOffsets, headerRecordIdx + huffRecordIndex, huffRecordCount);
+      }
+
+      // 逐条解压正文文本记录（headerRecordIdx + 1 .. headerRecordIdx + textRecordCount）
+      const firstTextRec = headerRecordIdx + 1;
+      const lastTextRec = Math.min(headerRecordIdx + textRecordCount, sectionEndIdx - 1);
+      const decompressedChunks = [];
+      let totalByteLen = 0;
+
+      for (let i = firstTextRec; i <= lastTextRec; i++) {
+        let recBytes = bytes.slice(recordOffsets[i], recordOffsets[i + 1]);
+
+        // 关键步骤：解压前必须剥离 extraDataFlags 指定的尾部校验与多字节重叠字节
+        if (extraDataFlags > 0) {
+          recBytes = stripMobiTrailingData(recBytes, extraDataFlags);
+        }
+
+        let plainBytes;
+        if (compression === 1) {
+          plainBytes = recBytes;
+        } else if (compression === 2) {
+          plainBytes = decompressPalmDOC(recBytes, recordSize * 2);
+        } else if (compression === 17480) {
+          plainBytes = huffDecoder.decodeRecord(recBytes);
+        } else {
+          throw new Error(`不支持的 MOBI 压缩算法类型: ${compression}`);
+        }
+
+        decompressedChunks.push(plainBytes);
+        totalByteLen += plainBytes.length;
+      }
+
+      // 合并所有解压后的字节，并按 textLength 精确截断尾部填充字节
+      const finalLength = (textLength > 0 && textLength <= totalByteLen) ? textLength : totalByteLen;
+      const mergedBytes = new Uint8Array(finalLength);
+      let cursor = 0;
+      for (const chunk of decompressedChunks) {
+        if (cursor >= finalLength) break;
+        const copyCount = Math.min(chunk.length, finalLength - cursor);
+        mergedBytes.set(chunk.subarray(0, copyCount), cursor);
+        cursor += copyCount;
+      }
+
+      // 若为 KF8 且存在 FDST 流表，仅提取第 0 个流（主 HTML 文本流，排除 CSS/SVG 流）
+      let textBytesToDecode = mergedBytes;
+      if (fdstIndex !== 0xFFFFFFFF && fdstIndex > 0 && headerRecordIdx + fdstIndex < sectionEndIdx) {
+        const fdstStart = recordOffsets[headerRecordIdx + fdstIndex];
+        const fdstEnd = recordOffsets[headerRecordIdx + fdstIndex + 1];
+        if (fdstEnd - fdstStart >= 20) {
+          const fdstMagic = String.fromCharCode(...bytes.slice(fdstStart, fdstStart + 4));
+          if (fdstMagic === 'FDST') {
+            const fdstView = new DataView(buffer, fdstStart, fdstEnd - fdstStart);
+            const flow0Start = fdstView.getUint32(12, false);
+            const flow0End = fdstView.getUint32(16, false);
+            if (flow0End > flow0Start && flow0End <= mergedBytes.length) {
+              textBytesToDecode = mergedBytes.subarray(flow0Start, flow0End);
+            }
+          }
+        }
+      }
+
+      // 按头信息指定编码解码字符串（65001 = UTF-8, 1252 = Windows-1252）
+      const charset = textEncoding === 1252 ? 'windows-1252' : 'utf-8';
+      const decoder = new TextDecoder(charset, { fatal: false });
+      const rawHtml = decoder.decode(textBytesToDecode);
+
+      // 提取内嵌图片（图片记录通常位于整本 PalmDB 的 firstImageIndex 处）
+      const imageDataUrls = new Map();
+      const absFirstImgRec = firstImageIndex > 0 ? firstImageIndex : 0;
+      if (absFirstImgRec > 0 && absFirstImgRec < recordOffsets.length - 1) {
+        let imgSeq = 1;
+        for (let r = absFirstImgRec; r < recordOffsets.length - 1; r++) {
+          const imgBytes = bytes.slice(recordOffsets[r], recordOffsets[r + 1]);
+          const mime = detectImageMime(imgBytes);
+          if (mime) {
+            const b64 = uint8ToBase64(imgBytes);
+            const dataUrl = `data:${mime};base64,${b64}`;
+            imageDataUrls.set(imgSeq, dataUrl);
+            // 同时存储 36 进制索引（KF8 kindle:embed:0001 格式常用）
+            imageDataUrls.set(imgSeq.toString(36).toUpperCase(), dataUrl);
+          }
+          imgSeq++;
+        }
+      }
+
+      // 解析 HTML 并将 Kindle 特有的 recindex / kindle:embed 图片属性替换为 Data URL
+      const parser = new DOMParser();
+      const doc = parser.parseFromString(rawHtml, 'text/html');
+      const body = doc.body || doc.documentElement;
+
+      body.querySelectorAll('script, style, meta, link').forEach(el => el.remove());
+
+      // 将 <mbp:pagebreak> 转换为分页符
+      body.querySelectorAll('mbp\\:pagebreak, pagebreak').forEach(pb => {
+        const hr = doc.createElement('div');
+        hr.className = 'chapter-break';
+        pb.replaceWith(hr);
+      });
+
+      body.querySelectorAll('img').forEach(img => {
+        const recIdxStr = img.getAttribute('recindex');
+        const srcStr = img.getAttribute('src') || '';
+
+        if (recIdxStr) {
+          const idx = parseInt(recIdxStr, 10);
+          if (imageDataUrls.has(idx)) {
+            img.setAttribute('src', imageDataUrls.get(idx));
+          } else {
+            img.remove();
+          }
+        } else if (srcStr.startsWith('kindle:embed:')) {
+          const embedCode = srcStr.replace('kindle:embed:', '').split('?')[0].replace(/^0+/, '').toUpperCase();
+          const decIdx = parseInt(embedCode, 36);
+          if (imageDataUrls.has(decIdx)) {
+            img.setAttribute('src', imageDataUrls.get(decIdx));
+          } else if (imageDataUrls.has(embedCode)) {
+            img.setAttribute('src', imageDataUrls.get(embedCode));
+          } else {
+            img.remove();
+          }
+        } else if (!srcStr.startsWith('data:')) {
+          img.remove();
+        }
+      });
+
+      const finalHtml = body.innerHTML.trim();
+      const modeLabel = headerRecordIdx > 0 ? 'KF8/AZW3' : 'MOBI';
+
+      return {
+        html: finalHtml,
+        summary: `${modeLabel} 解码成功 (${charset.toUpperCase()} · ${lastTextRec - firstTextRec + 1} 个数据块)`
+      };
+    }
+
+    /**
+     * 完整 PalmDOC LZ77 解压缩算法（支持重叠字节复制）
+     */
+    function decompressPalmDOC(data, maxOutSize = 16384) {
+      const out = [];
+      let i = 0;
+      const len = data.length;
+
+      while (i < len) {
+        const b = data[i++];
+
+        if (b === 0x00 || (b >= 0x09 && b <= 0x7f)) {
+          out.push(b);
+        } else if (b >= 0x01 && b <= 0x08) {
+          for (let j = 0; j < b && i < len; j++) {
+            out.push(data[i++]);
+          }
+        } else if (b >= 0x80 && b <= 0xbf) {
+          if (i >= len) break;
+          const next = data[i++];
+          const combined = ((b << 8) | next) & 0x3fff;
+          const distance = (combined >> 3) & 0x07ff;
+          const copyLen = (combined & 0x07) + 3;
+
+          if (distance > 0 && distance <= out.length) {
+            for (let j = 0; j < copyLen; j++) {
+              out.push(out[out.length - distance]);
+            }
+          }
+        } else {
+          out.push(0x20);
+          out.push(b ^ 0x80);
+        }
+
+        if (out.length > maxOutSize * 4) break;
+      }
+
+      return new Uint8Array(out);
+    }
+
+    /**
+     * 剥离 MOBI 文本记录末尾的 extraDataFlags 附加字节（VWI 变长整数 + 多字节重叠标记）
+     */
+    function stripMobiTrailingData(data, flags) {
+      let end = data.length;
+
+      for (let bit = 15; bit >= 1; bit--) {
+        if ((flags & (1 << bit)) !== 0) {
+          let size = 0;
+          let shift = 0;
+          let bytesRead = 0;
+          while (end > 0 && bytesRead < 4) {
+            const b = data[--end];
+            bytesRead++;
+            size |= (b & 0x7f) << shift;
+            shift += 7;
+            if ((b & 0x80) !== 0) break;
+          }
+          const payloadToStrip = Math.max(0, size - bytesRead);
+          end = Math.max(0, end - payloadToStrip);
+        }
+      }
+
+      if ((flags & 1) !== 0 && end > 0) {
+        const overlapCount = (data[end - 1] & 0x03) + 1;
+        end = Math.max(0, end - overlapCount);
+      }
+
+      return data.subarray(0, end);
+    }
+
+    /**
+     * 轻量化 HUFF/CDIC 压缩解码器（支持 compression === 17480 的旧版 Kindle 书籍）
+     */
+    function buildHuffCdicDecoder(bytes, recordOffsets, huffStartIdx, huffCount) {
+      const huffRec = bytes.slice(recordOffsets[huffStartIdx], recordOffsets[huffStartIdx + 1]);
+      const huffView = new DataView(huffRec.buffer, huffRec.byteOffset, huffRec.byteLength);
+
+      const magic = String.fromCharCode(...huffRec.slice(0, 4));
+      if (magic !== 'HUFF') {
+        throw new Error('无效的 HUFF 字典头。');
+      }
+
+      const off1 = huffView.getUint32(16, false);
+      const off2 = huffView.getUint32(20, false);
+
+      const dict1 = new Uint32Array(256);
+      for (let i = 0; i < 256; i++) {
+        dict1[i] = huffView.getUint32(off1 + i * 4, false);
+      }
+
+      const minCode = new Uint32Array(33);
+      const maxCode = new Uint32Array(33);
+      for (let i = 1; i <= 32; i++) {
+        minCode[i] = huffView.getUint32(off2 + (i - 1) * 8, false) << (32 - i);
+        maxCode[i] = ((huffView.getUint32(off2 + (i - 1) * 8 + 4, false) + 1) << (32 - i)) - 1;
+      }
+
+      const cdicEntries = [];
+      for (let c = 1; c < huffCount; c++) {
+        const cdicRec = bytes.slice(recordOffsets[huffStartIdx + c], recordOffsets[huffStartIdx + c + 1]);
+        const cdicMagic = String.fromCharCode(...cdicRec.slice(0, 4));
+        if (cdicMagic !== 'CDIC') continue;
+        const cdicView = new DataView(cdicRec.buffer, cdicRec.byteOffset, cdicRec.byteLength);
+        const numPhrases = cdicView.getUint32(12, false);
+        const codeLen = cdicView.getUint32(16, false);
+        const maxInRec = Math.min(numPhrases - cdicEntries.length, 1 << codeLen);
+
+        for (let p = 0; p < maxInRec; p++) {
+          const entryOff = cdicView.getUint16(32 + p * 2, false);
+          const absOff = 32 + entryOff;
+          if (absOff + 2 <= cdicRec.length) {
+            const flagLen = cdicView.getUint16(absOff, false);
+            const sliceLen = flagLen & 0x7fff;
+            const isLeaf = (flagLen & 0x8000) !== 0;
+            const sliceBytes = cdicRec.slice(absOff + 2, absOff + 2 + sliceLen);
+            cdicEntries.push({ bytes: sliceBytes, isLeaf, cache: null });
+          }
+        }
+      }
+
+      function unpackBits(bitSrc, bitPos, bitLen, outArr) {
+        while (bitPos < bitLen) {
+          const byteIdx = bitPos >> 3;
+          const bitShift = bitPos & 7;
+          let word = 0;
+          for (let k = 0; k < 5; k++) {
+            word = (word * 256) + (byteIdx + k < bitSrc.length ? bitSrc[byteIdx + k] : 0);
+          }
+          const code32 = Math.floor(word / Math.pow(2, 8 - bitShift)) >>> 0;
+
+          const t1 = dict1[code32 >>> 24];
+          let codelen = t1 & 0x1f;
+          let term = (t1 & 0x80) !== 0;
+          let maxcode = ((t1 >>> 8) + 1) * Math.pow(2, 32 - codelen) - 1;
+
+          if (!term) {
+            while (code32 < minCode[codelen] && codelen < 32) {
+              codelen++;
+            }
+            maxcode = maxCode[codelen];
+          }
+
+          const dictIdx = Math.floor((maxcode - code32) / Math.pow(2, 32 - codelen));
+          bitPos += codelen;
+
+          const entry = cdicEntries[dictIdx];
+          if (!entry) break;
+
+          if (entry.isLeaf) {
+            for (let b = 0; b < entry.bytes.length; b++) {
+              outArr.push(entry.bytes[b]);
+            }
+          } else {
+            if (!entry.cache) {
+              const subOut = [];
+              unpackBits(entry.bytes, 0, entry.bytes.length * 8, subOut);
+              entry.cache = new Uint8Array(subOut);
+            }
+            for (let b = 0; b < entry.cache.length; b++) {
+              outArr.push(entry.cache[b]);
+            }
+          }
+        }
+      }
+
+      return {
+        decodeRecord(recBytes) {
+          const out = [];
+          unpackBits(recBytes, 0, recBytes.length * 8, out);
+          return new Uint8Array(out);
+        }
+      };
+    }
+
+    /**
+     * 检测图片二进制魔数返回 MIME 类型
+     */
+    function detectImageMime(bytes) {
+      if (bytes.length < 4) return null;
+      if (bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return 'image/jpeg';
+      if (bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47) return 'image/png';
+      if (bytes[0] === 0x47 && bytes[1] === 0x49 && bytes[2] === 0x46) return 'image/gif';
+      return null;
+    }
+
+    function uint8ToBase64(bytes) {
+      let binary = '';
+      const chunkSize = 0x8000;
+      for (let i = 0; i < bytes.length; i += chunkSize) {
+        binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunkSize));
+      }
+      return btoa(binary);
+    }
+
+    /**
+     * 清理 HTML 中的潜在脚本
+     */
+    function sanitizeHtmlFragment(html) {
+      const parser = new DOMParser();
+      const doc = parser.parseFromString(html, 'text/html');
+      doc.body.querySelectorAll('script, iframe, object, embed').forEach(el => el.remove());
+      return doc.body.innerHTML;
+    }
+
+    function escapeHtml(str) {
+      return str
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+    }
+
+    /**
+     * ============================================================================
+     * 5. PDF 导出方式 A（推荐）：隔离 iframe + @page 矢量打印导出
+     * ============================================================================
+     */
+    function exportViaVectorPrint() {
+      if (!state.htmlContent) return;
+
+      const pageSize = els.optPageSize.value;
+      const fontSize = els.optFontSize.value;
+      const lineHeight = els.optLineHeight.value;
+      const margin = els.optMargin.value;
+
+      const frame = els.printFrame;
+      const doc = frame.contentDocument || frame.contentWindow.document;
+
+      const printHtml = `
+        <!DOCTYPE html>
+        <html lang="zh-CN">
+        <head>
+          <meta charset="UTF-8">
+          <title>${escapeHtml(state.baseName)}</title>
+          <style>
+            @page {
+              size: ${pageSize} portrait;
+              margin: ${margin};
+            }
+            * {
+              box-sizing: border-box;
+            }
+            html, body {
+              margin: 0;
+              padding: 0;
+              background: #ffffff;
+              color: #111111;
+              font-family: "Noto Serif SC", "Songti SC", "SimSun", Georgia, serif;
+              font-size: ${fontSize};
+              line-height: ${lineHeight};
+              word-break: break-word;
+              overflow-wrap: break-word;
+            }
+            h1, h2, h3, h4, h5, h6 {
+              font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+              font-weight: 600;
+              color: #000000;
+              page-break-after: avoid;
+              break-after: avoid;
+              margin-top: 1.4em;
+              margin-bottom: 0.55em;
+              line-height: 1.35;
+            }
+            h1 { font-size: 1.6em; border-bottom: 1px solid #dddddd; padding-bottom: 0.25em; }
+            h2 { font-size: 1.35em; }
+            h3 { font-size: 1.15em; }
+            p {
+              margin: 0 0 0.85em 0;
+              text-align: justify;
+              orphans: 3;
+              widows: 3;
+            }
+            img {
+              max-width: 100% !important;
+              height: auto !important;
+              display: block;
+              margin: 1em auto;
+              page-break-inside: avoid;
+              break-inside: avoid;
+            }
+            .epub-cover-wrap {
+              text-align: center;
+              page-break-after: always;
+              break-after: page;
+            }
+            .epub-cover-wrap img {
+              max-height: 85vh !important;
+              width: auto !important;
+            }
+            pre, blockquote, table {
+              page-break-inside: avoid;
+              break-inside: avoid;
+            }
+            pre {
+              background: #f5f5f5;
+              padding: 0.8em;
+              border-radius: 4px;
+              font-size: 0.86em;
+              white-space: pre-wrap;
+              font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+            }
+            code {
+              background: #f5f5f5;
+              padding: 0.1em 0.3em;
+              border-radius: 3px;
+              font-size: 0.9em;
+              font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+            }
+            pre code { background: transparent; padding: 0; }
+            blockquote {
+              border-left: 3px solid #2563eb;
+              padding-left: 0.9em;
+              color: #444444;
+              margin: 0.9em 0;
+            }
+            table {
+              width: 100%;
+              border-collapse: collapse;
+              margin: 1em 0;
+              font-size: 0.9em;
+            }
+            th, td {
+              border: 1px solid #dddddd;
+              padding: 0.45em 0.65em;
+              text-align: left;
+            }
+            th { background: #f5f5f5; }
+            .chapter-break {
+              page-break-before: always;
+              break-before: page;
+            }
+          </style>
+        </head>
+        <body>
+          ${state.htmlContent}
+        </body>
+        </html>
+      `;
+
+      const originalTitle = document.title;
+      document.title = state.baseName;
+
+      doc.open();
+      doc.write(printHtml);
+      doc.close();
+
+      showStatus('info', '正在唤起系统高清 PDF 导出窗口，请在目标打印机中选择「另存为 PDF」...');
+
+      setTimeout(() => {
+        try {
+          frame.contentWindow.focus();
+          frame.contentWindow.print();
+          showStatus('success', '已唤起 PDF 打印导出，保存后即可获得高清矢量 PDF。');
+        } catch (err) {
+          showStatus('error', '打印窗口调用失败，请尝试使用「一键直接下载 PDF」按钮。');
+        } finally {
+          setTimeout(() => {
+            document.title = originalTitle;
+          }, 1500);
+        }
+      }, 300);
+    }
+
+    /**
+     * ============================================================================
+     * 6. PDF 导出方式 B：直接生成并触发下载（基于 html2pdf.js）
+     * ============================================================================
+     */
+    async function exportViaDirectDownload() {
+      if (!state.htmlContent || state.isExporting) return;
+
+      if (typeof html2pdf === 'undefined') {
+        showStatus('error', 'html2pdf 组件尚未加载完成，请稍后重试或使用「导出高清矢量 PDF」。');
+        return;
+      }
+
+      state.isExporting = true;
+      els.directDownloadBtn.disabled = true;
+      els.directDownloadBtn.classList.add('opacity-60', 'cursor-not-allowed');
+      els.directDownloadText.textContent = '正在生成 PDF...';
+
+      showStatus('info', '正在前端渲染分页并生成 PDF 文件，长文档可能需要数秒，请勿关闭页面...');
+
+      const pageSize = els.optPageSize.value.toLowerCase();
+      const fontSize = els.optFontSize.value;
+      const lineHeight = els.optLineHeight.value;
+      const marginMm = parseInt(els.optMargin.value, 10) || 18;
+
+      const container = document.createElement('div');
+      container.className = 'preview-typography';
+      container.style.cssText = `
+        width: ${pageSize === 'a5' ? '148mm' : '210mm'};
+        padding: 0;
+        background: #ffffff;
+        color: #111111;
+        font-size: ${fontSize};
+        line-height: ${lineHeight};
+      `;
+      container.innerHTML = state.htmlContent;
+
+      const opt = {
+        margin: [marginMm, marginMm, marginMm, marginMm],
+        filename: `${state.baseName}.pdf`,
+        image: { type: 'jpeg', quality: 0.95 },
+        html2canvas: {
+          scale: 2,
+          useCORS: true,
+          letterRendering: true,
+          logging: false
+        },
+        jsPDF: {
+          unit: 'mm',
+          format: pageSize,
+          orientation: 'portrait'
+        },
+        pagebreak: {
+          mode: ['avoid-all', 'css', 'legacy'],
+          before: '.chapter-break'
+        }
+      };
+
+      try {
+        await html2pdf().set(opt).from(container).save();
+        showStatus('success', `已成功生成并下载 "${state.baseName}.pdf"！`);
+      } catch (err) {
+        console.error('html2pdf 生成错误:', err);
+        showStatus('error', '直接生成 PDF 时遇到内存或分页限制，建议使用右侧「导出高清矢量 PDF (推荐)」进行无损导出。');
+      } finally {
+        state.isExporting = false;
+        els.directDownloadBtn.disabled = false;
+        els.directDownloadBtn.classList.remove('opacity-60', 'cursor-not-allowed');
+        els.directDownloadText.textContent = '一键直接下载 PDF';
+      }
+    }
+
+    // 启动应用
+    init();
+  </script>
+</body>
+</html>
