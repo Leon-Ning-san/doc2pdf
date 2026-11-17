@@ -1,0 +1,35 @@
+{
+  "name": "doc2pdf",
+  "version": "1.0.0",
+  "description": "Doc2PDF — 极简电子书与文档转 PDF 工具",
+  "main": "main.js",
+  "author": "Doc2PDF",
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-builder --win portable"
+  },
+  "devDependencies": {
+    "electron": "^33.2.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.doc2pdf.app",
+    "productName": "Doc2PDF",
+    "files": [
+      "main.js",
+      "index.html"
+    ],
+    "directories": {
+      "output": "dist"
+    },
+    "win": {
+      "target": [
+        "portable"
+      ]
+    },
+    "portable": {
+      "artifactName": "Doc2PDF.exe"
+    }
+  }
+}
